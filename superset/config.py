@@ -2305,6 +2305,18 @@ GLOBAL_ASYNC_QUERIES_JWT_COOKIE_SAMESITE: None | (Literal["None", "Lax", "Strict
 )
 GLOBAL_ASYNC_QUERIES_JWT_COOKIE_DOMAIN = None
 GLOBAL_ASYNC_QUERIES_JWT_SECRET = "test-secret-change-me"  # noqa: S105
+# Lifetime of the async-query JWT used to authorize event-stream subscriptions.
+# Keep short; the session cookie is transparently refreshed before expiry.
+GLOBAL_ASYNC_QUERIES_JWT_EXP_SECONDS = int(timedelta(minutes=5).total_seconds())
+# Audience claim ("aud") for async-query JWTs. When None, falls back to the
+# configured WEBDRIVER_BASEURL host. May be a callable returning a string.
+GLOBAL_ASYNC_QUERIES_JWT_AUDIENCE: Callable[..., str] | str | None = None
+# When True, decoding rejects tokens missing exp/iat/aud or with a mismatching
+# audience. When False (compatibility mode), legacy tokens minted without these
+# claims are still accepted - set to False only during upgrade windows.
+GLOBAL_ASYNC_QUERIES_JWT_STRICT = True
+# Clock-skew leeway (in seconds) applied when validating async-query JWT claims.
+GLOBAL_ASYNC_QUERIES_JWT_LEEWAY_SECONDS = 5
 GLOBAL_ASYNC_QUERIES_TRANSPORT: Literal["polling", "ws"] = "polling"
 GLOBAL_ASYNC_QUERIES_POLLING_DELAY = int(
     timedelta(milliseconds=500).total_seconds() * 1000

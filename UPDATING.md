@@ -24,6 +24,25 @@ assists people when migrating to a new version.
 
 ## Next
 
+### Global Async Queries JWT hardening
+
+The async-query JWT that authorizes event-stream subscriptions (Flask-issued cookie consumed by `superset-websocket`) now includes standard claims (`iat`, `exp`, `aud`) and validates them on decode on both sides. By default, tokens expire after 5 minutes and are transparently refreshed before expiry.
+
+**New Flask config keys (all optional, sensible defaults):**
+
+- `GLOBAL_ASYNC_QUERIES_JWT_EXP_SECONDS` — lifetime of the JWT (default `300`).
+- `GLOBAL_ASYNC_QUERIES_JWT_AUDIENCE` — audience claim; string, callable, or `None` to fall back to the configured host.
+- `GLOBAL_ASYNC_QUERIES_JWT_STRICT` — when `True` (default), rejects tokens missing `exp`/`iat`/`aud`. Set to `False` during an upgrade window to accept legacy tokens issued by older Superset versions.
+- `GLOBAL_ASYNC_QUERIES_JWT_LEEWAY_SECONDS` — clock-skew leeway for expiry checks (default `5`).
+
+**New `superset-websocket` config keys:**
+
+- `jwtAudience` (env `JWT_AUDIENCE`) — must match the Flask audience.
+- `jwtMaxAgeSeconds` (env `JWT_MAX_AGE_SECONDS`, default `300`) — rejects tokens older than this.
+- `jwtRequireSub` (env `JWT_REQUIRE_SUB`, default `false`) — when `true`, rejects tokens without a `sub` claim.
+
+**Upgrade path:** The default (strict) configuration invalidates any cookies issued before this change. To avoid briefly breaking active sessions across an upgrade, deploy in two steps: (1) roll out the new code with `GLOBAL_ASYNC_QUERIES_JWT_STRICT=False` so legacy tokens are accepted while all new tokens include the standard claims; (2) once legacy tokens have expired, flip the flag back to `True`.
+
 ### Granular Export Controls
 
 A new feature flag `GRANULAR_EXPORT_CONTROLS` introduces three fine-grained permissions that replace the legacy `can_csv` permission:
