@@ -1,0 +1,133 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+# Rule pack for the event-driven vulnerability audit.
+# Each rule maps a 1:1 or 1:N detection to a workstream from the remediation
+# plan. The scanner matches ``pattern`` (Python regex) against files that
+# match any of the ``globs``; ``negate_pattern`` suppresses the finding if the
+# regex matches the surrounding window (used to detect that a fix is already
+# in place).
+
+rules:
+  - id: async-jwt-missing-exp
+    title: "Async-query JWT encoded without exp/iat/aud claims"
+    workstream: W1
+    severity: high
+    globs: ["superset/async_events/async_query_manager.py"]
+    pattern: "jwt\\.encode\\(\\s*\\{[^}]*?\\}\\s*,"
+    negate_pattern: "\"exp\"\\s*:"
+    remediation: |
+      Encode async-query JWTs with iat, exp, and (when configured) aud claims.
+      Verify the same claims on decode using PyJWT's ``options`` + ``audience``
+      + ``leeway`` arguments. See docs/security/async-queries.md.
+
+  - id: ws-channel-no-user-binding
+    title: "WebSocket channel subscription without authenticated user binding"
+    workstream: W1
+    severity: high
+    globs: ["superset-websocket/src/index.ts"]
+    pattern: "jwt\\.verify\\([^)]*\\)"
+    negate_pattern: "audience\\s*:"
+    remediation: |
+      Require ``audience`` (and optionally ``sub``) when verifying the JWT so a
+      stolen token cannot subscribe to an arbitrary channel.
+
+  - id: hs256-shared-secret
+    title: "HS256 JWT shared between Flask and Node worker"
+    workstream: W6
+    severity: high
+    globs: ["superset-websocket/src/index.ts", "superset/config.py"]
+    pattern: "HS256"
+    remediation: |
+      Plan migration to asymmetric keys (RS256/ES256) so Flask signs with a
+      private key and the Node worker only holds the public key.
+
+  - id: webhook-ssrf-no-allowlist
+    title: "Webhook notifier without host allowlist / private-IP blocking"
+    workstream: W4
+    severity: high
+    globs: ["superset/reports/notifications/webhook.py"]
+    pattern: "requests\\.(post|put|get)\\("
+    negate_pattern: "allow_redirects\\s*=\\s*False"
+    remediation: |
+      Block private/loopback ranges, disable redirects, pin DNS, and require
+      HTTPS by default. See W4 in the remediation plan.
+
+  - id: guest-token-in-celery-payload
+    title: "Guest JWT shipped through Celery broker in plaintext"
+    workstream: W3
+    severity: high
+    globs: ["superset/tasks/async_queries.py", "superset/async_events/async_query_manager.py"]
+    pattern: "guest_token"
+    negate_pattern: "one_shot|opaque_handle|redacted"
+    remediation: |
+      Replace raw guest JWTs in broker payloads with one-shot opaque handles
+      resolved server-side just before query execution.
+
+  - id: xrange-unbounded-reconnect
+    title: "Unbounded XRANGE on reconnect allows event flood"
+    workstream: W2
+    severity: medium
+    globs: ["superset-websocket/src/index.ts"]
+    pattern: "xrange|XRANGE"
+    negate_pattern: "COUNT|count"
+    remediation: |
+      Cap the XRANGE replay window and enforce a server-side maximum so a
+      client-controlled last_id cannot trigger an unbounded read.
+
+  - id: stream-injection-processor
+    title: "processStreamResults does not validate payload shape"
+    workstream: W2
+    severity: medium
+    globs: ["superset-websocket/src/index.ts"]
+    pattern: "processStreamResults"
+    negate_pattern: "hmac|signature|schema"
+    remediation: |
+      HMAC-sign stream entries server-side; validate the signature and payload
+      schema in processStreamResults before dispatching to subscribers.
+
+  - id: increment-id-lexicographic
+    title: "Python increment_id uses lexicographic suffix arithmetic"
+    workstream: W2
+    severity: medium
+    globs: ["superset/async_events/async_query_manager.py"]
+    pattern: "def\\s+increment_id"
+    negate_pattern: "int\\([^)]+\\)\\s*\\+\\s*1"
+    remediation: |
+      Parse the numeric suffix and re-emit with zero-padding so multi-digit
+      Redis stream IDs round-trip without silent event loss.
+
+  - id: async-event-api-no-rate-limit
+    title: "/api/v1/async_event/ lacks explicit rate limiting"
+    workstream: W2
+    severity: medium
+    globs: ["superset/async_events/api.py"]
+    pattern: "class\\s+AsyncEventsRestApi"
+    negate_pattern: "limiter|rate_limit"
+    remediation: |
+      Add a Flask-Limiter decorator to /async_event/ to bound polling traffic.
+
+  - id: metastore-pickle-fallback
+    title: "Metastore cache falls back to pickle codec"
+    workstream: W5
+    severity: low
+    globs: ["superset/extensions/metastore_cache.py", "superset/utils/cache_manager.py"]
+    pattern: "pickle"
+    negate_pattern: "RestrictedUnpickler|json\\s+codec"
+    remediation: |
+      Default to JSON serialization; gate pickle behind an explicit opt-in
+      with a restricted unpickler for legacy migration paths.
