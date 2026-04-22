@@ -43,21 +43,23 @@ async def main(workstream: str) -> int:
     storage = Storage(settings.database_url)
     await storage.init_models()
     client = DevinClient(settings.devin_api_key, settings.devin_api_base)
-    dispatcher = Dispatcher(storage, settings, client)
+    try:
+        dispatcher = Dispatcher(storage, settings, client)
 
-    rules = load_rules(settings.rules_path)
-    findings = [f for f in scan(settings.repo_path, rules) if f.workstream == workstream]
-    if not findings:
-        print(f"No open findings for {workstream}", file=sys.stderr)
-        return 1
+        rules = load_rules(settings.rules_path)
+        findings = [f for f in scan(settings.repo_path, rules) if f.workstream == workstream]
+        if not findings:
+            print(f"No open findings for {workstream}", file=sys.stderr)
+            return 1
 
-    await dispatcher.upsert_findings(findings)
-    results = await dispatcher.dispatch_pending()
-    out = [r.__dict__ for r in results]
-    print(json.dumps(out, indent=2, default=str))
-    await client.aclose()
-    await storage.close()
-    return 0 if results else 1
+        await dispatcher.upsert_findings(findings)
+        results = await dispatcher.dispatch_pending()
+        out = [r.__dict__ for r in results]
+        print(json.dumps(out, indent=2, default=str))
+        return 0 if results else 1
+    finally:
+        await client.aclose()
+        await storage.close()
 
 
 if __name__ == "__main__":
