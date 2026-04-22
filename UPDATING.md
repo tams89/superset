@@ -24,6 +24,32 @@ assists people when migrating to a new version.
 
 ## Next
 
+### Alert/Report Webhook SSRF Guardrails
+
+Outbound webhook notifications now enforce Server-Side Request Forgery (SSRF)
+guardrails before any request is issued:
+
+- URLs that resolve to private, loopback, link-local, multicast, reserved, or
+  unspecified addresses are rejected.
+- HTTP redirects are no longer followed (`allow_redirects=False`).
+- DNS is resolved and validated up-front, and resolution is pinned to the
+  pre-validated addresses for the duration of the outbound request to prevent
+  DNS rebinding between validation and connection.
+- HTTPS is still required by default via `ALERT_REPORTS_WEBHOOK_HTTPS_ONLY`.
+
+Two new configuration options are available:
+
+| Config | Default | Purpose |
+|---|---|---|
+| `ALERT_REPORTS_WEBHOOK_HOST_ALLOWLIST` | `[]` | Optional list of hostnames (exact) or dot-prefixed suffixes (e.g. `.example.com`). When non-empty, only matching targets are allowed. |
+| `ALERT_REPORTS_WEBHOOK_ALLOW_PRIVATE_IPS` | `False` | When `True`, private / loopback / link-local addresses are permitted. Intended for development and testing only. |
+
+**Migration behavior:** Deployments that previously relied on webhooks pointing
+at internal services (for example, `http://internal-service.local/hook`) must
+either enable `ALERT_REPORTS_WEBHOOK_ALLOW_PRIVATE_IPS=True` or route the
+traffic through a public ingress. Webhook endpoints that relied on HTTP
+redirects must be updated to serve the final URL directly.
+
 ### Granular Export Controls
 
 A new feature flag `GRANULAR_EXPORT_CONTROLS` introduces three fine-grained permissions that replace the legacy `can_csv` permission:

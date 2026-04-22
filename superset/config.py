@@ -1989,6 +1989,14 @@ ALERT_MINIMUM_INTERVAL = int(timedelta(minutes=0).total_seconds())
 REPORT_MINIMUM_INTERVAL = int(timedelta(minutes=0).total_seconds())
 # Enforce HTTPS for webhook alerts/reports
 ALERT_REPORTS_WEBHOOK_HTTPS_ONLY = True
+# Hostnames (or dot-prefixed domain suffixes) permitted as webhook targets.
+# When the list is empty, any public hostname is allowed; when non-empty the
+# configured allowlist is enforced strictly. Examples: ``api.example.com`` for
+# an exact match, ``.example.com`` to allow the domain and any subdomain.
+ALERT_REPORTS_WEBHOOK_HOST_ALLOWLIST: list[str] = []
+# Permit webhook targets that resolve to private, loopback, link-local, or
+# otherwise non-routable addresses. Intended for development and testing.
+ALERT_REPORTS_WEBHOOK_ALLOW_PRIVATE_IPS = False
 
 # A custom prefix to use on all Alerts & Reports emails
 EMAIL_REPORTS_SUBJECT_PREFIX = "[Report] "
