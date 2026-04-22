@@ -25,6 +25,7 @@ is easy to extend.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -150,7 +151,7 @@ def scan(repo_path: Path, rules: list[Rule]) -> list[Finding]:
 
 
 def _walk_repo(repo_path: Path) -> list[Path]:
-    skip_dirs = {".\.git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build"}
+    skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build"}
     out: list[Path] = []
     for root, dirs, files in os.walk(repo_path):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
