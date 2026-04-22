@@ -208,12 +208,13 @@ class Dispatcher:
                 metadata_json=metadata,
             )
             session.add(record)
-            await session.execute(
-                update(Finding)
-                .where(Finding.id.in_(finding_ids))
-                .where(Finding.status.in_(("open", "reopened")))
-                .values(status="dispatched")
-            )
+            if status != "failed":
+                await session.execute(
+                    update(Finding)
+                    .where(Finding.id.in_(finding_ids))
+                    .where(Finding.status.in_(("open", "reopened")))
+                    .values(status="dispatched")
+                )
             await session.commit()
             session_pk = record.id
 
