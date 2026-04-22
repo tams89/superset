@@ -150,13 +150,14 @@ def scan(repo_path: Path, rules: list[Rule]) -> list[Finding]:
 
 
 def _walk_repo(repo_path: Path) -> list[Path]:
-    skip_dirs = {".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build"}
+    skip_dirs = {".\.git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build"}
     out: list[Path] = []
-    for path in repo_path.rglob("*"):
-        if path.is_dir() and path.name in skip_dirs:
-            continue
-        if path.is_file() and path.suffix in {".py", ".ts", ".tsx", ".js", ".yaml", ".yml"}:
-            out.append(path)
+    for root, dirs, files in os.walk(repo_path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            p = Path(root) / fname
+            if p.suffix in {".py", ".ts", ".tsx", ".js", ".yaml", ".yml"}:
+                out.append(p)
     return out
 
 
