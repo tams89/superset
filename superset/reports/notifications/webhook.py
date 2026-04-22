@@ -17,7 +17,6 @@
 
 import logging
 from typing import Any
-from urllib.parse import urlparse
 
 import backoff
 import requests
@@ -29,6 +28,10 @@ from superset.reports.notifications.base import BaseNotification
 from superset.reports.notifications.exceptions import (
     NotificationParamException,
     NotificationUnprocessableException,
+)
+from superset.reports.notifications.webhook_security import (
+    pinned_dns,
+    validate_webhook_url,
 )
 from superset.utils import json
 from superset.utils.decorators import statsd_gauge
@@ -104,26 +107,40 @@ class WebhookNotification(BaseNotification):
                 is not enabled."
             )
         wh_url = self._get_webhook_url()
-        if current_app.config["ALERT_REPORTS_WEBHOOK_HTTPS_ONLY"]:
-            if urlparse(wh_url).scheme.lower() != "https":
-                raise NotificationParamException(
-                    "Webhook failed: HTTPS is required by config for webhook URLs."
-                )
+        config = current_app.config
+        validation = validate_webhook_url(
+            wh_url,
+            https_only=config["ALERT_REPORTS_WEBHOOK_HTTPS_ONLY"],
+            allow_private_ips=config["ALERT_REPORTS_WEBHOOK_ALLOW_PRIVATE_IPS"],
+            host_allowlist=config["ALERT_REPORTS_WEBHOOK_HOST_ALLOWLIST"],
+        )
         payload = self._get_req_payload()
         files = self._get_files()
 
         try:
-            if files:
-                data = {}
-                for key, value in payload.items():
-                    if isinstance(value, (dict, list)):
-                        data[key] = json.dumps(value)
-                    else:
-                        data[key] = value
+            with pinned_dns(validation.hostname, validation.resolved):
+                if files:
+                    data = {}
+                    for key, value in payload.items():
+                        if isinstance(value, (dict, list)):
+                            data[key] = json.dumps(value)
+                        else:
+                            data[key] = value
 
-                response = requests.post(wh_url, data=data, files=files, timeout=60)
-            else:
-                response = requests.post(wh_url, json=payload, timeout=60)
+                    response = requests.post(
+                        wh_url,
+                        data=data,
+                        files=files,
+                        timeout=60,
+                        allow_redirects=False,
+                    )
+                else:
+                    response = requests.post(
+                        wh_url,
+                        json=payload,
+                        timeout=60,
+                        allow_redirects=False,
+                    )
 
             logger.info(
                 "Webhook sent to %s, status code: %s", wh_url, response.status_code
