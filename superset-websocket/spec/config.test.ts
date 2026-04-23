@@ -74,3 +74,24 @@ test('buildConfig() performs deep merge between configs', () => {
   // We overrode the pwd
   expect(config.redis.password).toEqual('some pwd');
 });
+
+test('buildConfig() exposes JWT hardening defaults and env overrides', () => {
+  let config = buildConfig();
+  expect(config.jwtAudience).toEqual('');
+  expect(config.jwtMaxAgeSeconds).toEqual(300);
+  expect(config.jwtRequireSub).toEqual(false);
+
+  process.env.JWT_AUDIENCE = 'superset';
+  process.env.JWT_MAX_AGE_SECONDS = '60';
+  process.env.JWT_REQUIRE_SUB = 'true';
+
+  config = buildConfig();
+
+  expect(config.jwtAudience).toEqual('superset');
+  expect(config.jwtMaxAgeSeconds).toEqual(60);
+  expect(config.jwtRequireSub).toEqual(true);
+
+  delete process.env.JWT_AUDIENCE;
+  delete process.env.JWT_MAX_AGE_SECONDS;
+  delete process.env.JWT_REQUIRE_SUB;
+});

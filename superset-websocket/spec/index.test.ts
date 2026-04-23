@@ -493,6 +493,71 @@ describe('server', () => {
       expect(socketDestroySpy).not.toHaveBeenCalled();
       expect(wssUpgradeSpy).toHaveBeenCalled();
     });
+
+    test('rejects tokens older than jwtMaxAgeSeconds', async () => {
+      const originalMaxAge = server.opts.jwtMaxAgeSeconds;
+      server.opts.jwtMaxAgeSeconds = 1;
+      // iat two seconds in the past -> outside the 1s max age window.
+      const staleToken = jwt.sign(
+        {
+          channel: channelId,
+          iat: Math.floor(Date.now() / 1000) - 2,
+        },
+        config.jwtSecret,
+      );
+      const request = getRequest(staleToken, 'http://localhost');
+
+      server.httpUpgrade(request, socket, Buffer.alloc(5));
+
+      expect(socketDestroySpy).toHaveBeenCalled();
+      expect(wssUpgradeSpy).not.toHaveBeenCalled();
+      server.opts.jwtMaxAgeSeconds = originalMaxAge;
+    });
+
+    test('rejects audience mismatch when jwtAudience set', async () => {
+      const originalAudience = server.opts.jwtAudience;
+      server.opts.jwtAudience = 'superset';
+      const wrongAudienceToken = jwt.sign(
+        { channel: channelId, aud: 'someone-else' },
+        config.jwtSecret,
+      );
+      const request = getRequest(wrongAudienceToken, 'http://localhost');
+
+      server.httpUpgrade(request, socket, Buffer.alloc(5));
+
+      expect(socketDestroySpy).toHaveBeenCalled();
+      expect(wssUpgradeSpy).not.toHaveBeenCalled();
+      server.opts.jwtAudience = originalAudience;
+    });
+
+    test('accepts matching audience', async () => {
+      const originalAudience = server.opts.jwtAudience;
+      server.opts.jwtAudience = 'superset';
+      const token = jwt.sign(
+        { channel: channelId, aud: 'superset' },
+        config.jwtSecret,
+      );
+      const request = getRequest(token, 'http://localhost');
+
+      server.httpUpgrade(request, socket, Buffer.alloc(5));
+
+      expect(socketDestroySpy).not.toHaveBeenCalled();
+      expect(wssUpgradeSpy).toHaveBeenCalled();
+      server.opts.jwtAudience = originalAudience;
+    });
+
+    test('rejects tokens missing sub when jwtRequireSub is true', async () => {
+      const originalRequireSub = server.opts.jwtRequireSub;
+      server.opts.jwtRequireSub = true;
+      const token = jwt.sign({ channel: channelId }, config.jwtSecret);
+      const request = getRequest(token, 'http://localhost');
+
+      server.httpUpgrade(request, socket, Buffer.alloc(5));
+
+      expect(socketDestroySpy).toHaveBeenCalled();
+      expect(wssUpgradeSpy).not.toHaveBeenCalled();
+      server.opts.jwtRequireSub = originalRequireSub;
+    });
   });
 
   const setReadyState = (ws: WebSocket, value: typeof ws.readyState) => {

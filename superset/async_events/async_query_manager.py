@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 import jwt
 from flask import Flask, Request, request, Response, session
@@ -112,6 +113,10 @@ class AsyncQueryManager:
         self._jwt_cookie_domain: Optional[str]
         self._jwt_cookie_samesite: Optional[Literal["None", "Lax", "Strict"]] = None
         self._jwt_secret: str
+        self._jwt_exp_seconds: int = 300
+        self._jwt_audience_config: Callable[..., str] | str | None = None
+        self._jwt_strict: bool = True
+        self._jwt_leeway: int = 5
         self._load_chart_data_into_cache_job: Any = None
         # pylint: disable=invalid-name
         self._load_explore_json_into_cache_job: Any = None
@@ -147,6 +152,12 @@ class AsyncQueryManager:
         ]
         self._jwt_cookie_domain = app.config["GLOBAL_ASYNC_QUERIES_JWT_COOKIE_DOMAIN"]
         self._jwt_secret = app.config["GLOBAL_ASYNC_QUERIES_JWT_SECRET"]
+        self._jwt_exp_seconds = app.config.get(
+            "GLOBAL_ASYNC_QUERIES_JWT_EXP_SECONDS", 300
+        )
+        self._jwt_audience_config = app.config.get("GLOBAL_ASYNC_QUERIES_JWT_AUDIENCE")
+        self._jwt_strict = app.config.get("GLOBAL_ASYNC_QUERIES_JWT_STRICT", True)
+        self._jwt_leeway = app.config.get("GLOBAL_ASYNC_QUERIES_JWT_LEEWAY_SECONDS", 5)
 
         if app.config["GLOBAL_ASYNC_QUERIES_REGISTER_REQUEST_HANDLERS"]:
             self.register_request_handlers(app)
@@ -160,13 +171,93 @@ class AsyncQueryManager:
         self._load_chart_data_into_cache_job = load_chart_data_into_cache
         self._load_explore_json_into_cache_job = load_explore_json_into_cache
 
+    def _get_jwt_audience(self) -> Optional[str]:
+        """Resolve the JWT audience claim.
+
+        Falls back to the Superset URL host when no explicit audience is
+        configured, matching the behavior of the guest-token audience helper.
+        """
+        audience = self._jwt_audience_config
+        if callable(audience):
+            audience = audience()
+        if audience:
+            return audience
+        # pylint: disable=import-outside-toplevel
+        from superset.utils.urls import get_url_host
+
+        try:
+            return get_url_host()
+        except Exception:  # pylint: disable=broad-except
+            return None
+
+    def _encode_jwt(self, channel_id: str, user_id: Optional[int]) -> tuple[str, float]:
+        """Encode an async-query JWT with standard claims.
+
+        Returns the encoded token and its expiration epoch seconds.
+        """
+        now = time.time()
+        exp = now + self._jwt_exp_seconds
+        sub = str(user_id) if user_id else None
+        payload: dict[str, Any] = {
+            "channel": channel_id,
+            "sub": sub,
+            "iat": int(now),
+            "exp": int(exp),
+        }
+        if audience := self._get_jwt_audience():
+            payload["aud"] = audience
+        token = jwt.encode(payload, self._jwt_secret, algorithm="HS256")
+        return token, exp
+
+    def _decode_jwt(self, token: str) -> dict[str, Any]:
+        """Decode an async-query JWT and validate standard claims.
+
+        In strict mode, tokens missing ``exp``/``iat``/``aud`` or carrying the
+        wrong audience are rejected. In compatibility mode
+        (``GLOBAL_ASYNC_QUERIES_JWT_STRICT=False``) legacy tokens issued before
+        the claim hardening are still accepted to ease upgrades.
+        """
+        audience = self._get_jwt_audience()
+        decode_kwargs: dict[str, Any] = {
+            "algorithms": ["HS256"],
+            "leeway": self._jwt_leeway,
+        }
+        if self._jwt_strict:
+            required = ["exp", "iat"]
+            if audience:
+                required.append("aud")
+            decode_kwargs["options"] = {"require": required}
+            if audience:
+                decode_kwargs["audience"] = audience
+        else:
+            # Compatibility mode: accept legacy tokens that predate the claim
+            # hardening. Signature is still verified, and ``exp`` is enforced
+            # when present, but ``aud`` is skipped so audience-less tokens are
+            # still accepted during the upgrade window.
+            decode_kwargs["options"] = {"verify_aud": False}
+        return jwt.decode(token, self._jwt_secret, **decode_kwargs)
+
+    def _issue_cookie(
+        self, response: Response, channel_id: str, user_id: Optional[int]
+    ) -> None:
+        token, _exp = self._encode_jwt(channel_id, user_id)
+        response.set_cookie(
+            self._jwt_cookie_name,
+            value=token,
+            httponly=True,
+            secure=self._jwt_cookie_secure,
+            domain=self._jwt_cookie_domain,
+            samesite=self._jwt_cookie_samesite,
+        )
+
     def register_request_handlers(self, app: Flask) -> None:
         @app.after_request
         def validate_session(response: Response) -> Response:
             user_id = get_user_id()
 
+            existing_token = request.cookies.get(self._jwt_cookie_name)
             reset_token = (
-                not request.cookies.get(self._jwt_cookie_name)
+                not existing_token
                 or "async_channel_id" not in session
                 or "async_user_id" not in session
                 or user_id != session["async_user_id"]
@@ -176,32 +267,41 @@ class AsyncQueryManager:
                 async_channel_id = str(uuid.uuid4())
                 session["async_channel_id"] = async_channel_id
                 session["async_user_id"] = user_id
+                self._issue_cookie(response, async_channel_id, user_id)
+                return response
 
-                sub = str(user_id) if user_id else None
-                token = jwt.encode(
-                    {"channel": async_channel_id, "sub": sub},
-                    self._jwt_secret,
-                    algorithm="HS256",
-                )
+            # Silently refresh the cookie when the current token is close to
+            # expiring so short-lived JWTs don't disrupt active sessions.
+            try:
+                claims = self._decode_jwt(existing_token)
+            except jwt.InvalidTokenError:
+                async_channel_id = str(uuid.uuid4())
+                session["async_channel_id"] = async_channel_id
+                session["async_user_id"] = user_id
+                self._issue_cookie(response, async_channel_id, user_id)
+                return response
 
-                response.set_cookie(
-                    self._jwt_cookie_name,
-                    value=token,
-                    httponly=True,
-                    secure=self._jwt_cookie_secure,
-                    domain=self._jwt_cookie_domain,
-                    samesite=self._jwt_cookie_samesite,
-                )
+            exp = claims.get("exp")
+            if isinstance(exp, (int, float)):
+                remaining = exp - time.time()
+                if remaining < self._jwt_exp_seconds / 2:
+                    self._issue_cookie(response, session["async_channel_id"], user_id)
 
             return response
 
     def parse_channel_id_from_request(self, req: Request) -> str:
         token = req.cookies.get(self._jwt_cookie_name)
         if not token:
-            raise AsyncQueryTokenException("Token not preset")
+            raise AsyncQueryTokenException("Token not present")
 
         try:
-            return jwt.decode(token, self._jwt_secret, algorithms=["HS256"])["channel"]
+            claims = self._decode_jwt(token)
+            channel = claims.get("channel")
+            if not channel:
+                raise AsyncQueryTokenException("Token is missing channel claim")
+            return channel
+        except AsyncQueryTokenException:
+            raise
         except Exception as ex:
             logger.warning("Parse jwt failed", exc_info=True)
             raise AsyncQueryTokenException("Failed to parse token") from ex

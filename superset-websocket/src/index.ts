@@ -289,13 +289,27 @@ const readChannelId = (request: http.IncomingMessage): string => {
   const token = cookies[opts.jwtCookieName];
 
   if (!token) throw new Error('JWT not present');
-  const jwtPayload = jwt.verify(token, opts.jwtSecret, {
+  const verifyOptions: jwt.VerifyOptions = {
     algorithms: opts.jwtAlgorithms as Algorithm[],
     complete: false,
-  }) as JwtPayload;
+  };
+  if (opts.jwtAudience) {
+    verifyOptions.audience = opts.jwtAudience;
+  }
+  if (opts.jwtMaxAgeSeconds && opts.jwtMaxAgeSeconds > 0) {
+    verifyOptions.maxAge = opts.jwtMaxAgeSeconds;
+  }
+  const jwtPayload = jwt.verify(
+    token,
+    opts.jwtSecret,
+    verifyOptions,
+  ) as JwtPayload;
   const channelId = jwtPayload[opts.jwtChannelIdKey];
 
   if (!channelId) throw new Error('Channel ID not present in JWT');
+  if (opts.jwtRequireSub && !jwtPayload.sub) {
+    throw new Error('sub claim not present in JWT');
+  }
 
   return channelId;
 };

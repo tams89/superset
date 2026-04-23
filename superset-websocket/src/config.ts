@@ -47,6 +47,9 @@ type ConfigType = {
   jwtSecret: string;
   jwtCookieName: string;
   jwtChannelIdKey: string;
+  jwtAudience: string;
+  jwtMaxAgeSeconds: number;
+  jwtRequireSub: boolean;
   socketResponseTimeoutMs: number;
   pingSocketsIntervalMs: number;
   gcChannelsIntervalMs: number;
@@ -65,6 +68,9 @@ function defaultConfig(): ConfigType {
     jwtSecret: '',
     jwtCookieName: 'async-token',
     jwtChannelIdKey: 'channel',
+    jwtAudience: '',
+    jwtMaxAgeSeconds: 5 * 60,
+    jwtRequireSub: false,
     socketResponseTimeoutMs: 60 * 1000,
     pingSocketsIntervalMs: 20 * 1000,
     gcChannelsIntervalMs: 120 * 1000,
@@ -114,6 +120,9 @@ function applyEnvOverrides(config: ConfigType): ConfigType {
       (config.redisStreamReadBlockMs = toNumber(val)),
     JWT_SECRET: val => (config.jwtSecret = val),
     JWT_COOKIE_NAME: val => (config.jwtCookieName = val),
+    JWT_AUDIENCE: val => (config.jwtAudience = val),
+    JWT_MAX_AGE_SECONDS: val => (config.jwtMaxAgeSeconds = toNumber(val)),
+    JWT_REQUIRE_SUB: val => (config.jwtRequireSub = toBoolean(val)),
     SOCKET_RESPONSE_TIMEOUT_MS: val =>
       (config.socketResponseTimeoutMs = toNumber(val)),
     PING_SOCKETS_INTERVAL_MS: val =>
