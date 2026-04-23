@@ -55,6 +55,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+bot = ["templates/*.html"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
