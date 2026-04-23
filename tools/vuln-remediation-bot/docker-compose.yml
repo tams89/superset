@@ -1,0 +1,28 @@
+services:
+  vuln-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vuln-remediation-bot-local
+    container_name: vuln-bot
+    ports:
+      - "8099:8099"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Use container-native paths regardless of host OS path format.
+      VULN_BOT_REPO_PATH: /workspace
+      VULN_BOT_RULES_PATH: /app/rules
+      VULN_BOT_DATABASE_URL: sqlite+aiosqlite:////data/vuln_bot.db
+      # Set to false in .env to enable real Devin API dispatches.
+      VULN_BOT_DRY_RUN: ${VULN_BOT_DRY_RUN:-true}
+    volumes:
+      # Mount the full Superset repository for scanning.
+      - ../../:/workspace:ro
+      # Persist sqlite state across restarts.
+      - vuln_bot_data:/data
+    restart: unless-stopped
+
+volumes:
+  vuln_bot_data:
